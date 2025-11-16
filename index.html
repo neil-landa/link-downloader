@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta
+      name="description"
+      content="Link Downloader - Convert video links to the highest quality available audio format. Supports YouTube, SoundCloud, and more."
+    />
+
+    <!-- Always include this line of code!!! -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <link rel="icon" href="img/favicon.png" />
+    <link rel="apple-touch-icon" href="img/apple-touch-icon.png" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <link rel="stylesheet" href="css/general.css" />
+    <link rel="stylesheet" href="css/style.css" />
+    <link rel="stylesheet" href="css/queries.css" />
+
+    <script
+      type="module"
+      src="https://unpkg.com/ionicons@5.4.0/dist/ionicons/ionicons.esm.js"
+    ></script>
+    <script
+      nomodule=""
+      src="https://unpkg.com/ionicons@5.4.0/dist/ionicons/ionicons.js"
+    ></script>
+
+    <script
+      defer
+      src="https://unpkg.com/smoothscroll-polyfill@0.4.4/dist/smoothscroll.min.js"
+    ></script>
+    <script defer src="js/script.js"></script>
+
+    <title>Link Downloader - Convert Links to Audio</title>
+  </head>
+
+  <body>
+    <header class="header">
+      <a href="#">
+        <h2 class="logo-text">Link Downloader</h2>
+      </a>
+
+      <nav class="main-nav">
+        <ul class="main-nav-list">
+          <!-- Navigation items can be added here if needed -->
+        </ul>
+      </nav>
+
+      <button class="btn-mobile-nav">
+        <ion-icon class="icon-mobile-nav" name="menu-outline"></ion-icon>
+        <ion-icon class="icon-mobile-nav" name="close-outline"></ion-icon>
+      </button>
+    </header>
+
+    <main>
+      <section class="section-hero">
+        <div class="hero">
+          <div class="hero-text-box">
+            <h1 class="heading-primary center-text">Link Downloader</h1>
+            <p class="hero-description center-text">
+              Paste up to 10 video links below. We'll convert them to the
+              highest quality audio format available.
+              <br />Supports YouTube, SoundCloud, and more.
+            </p>
+            <form
+              method="POST"
+              action="/download"
+              id="linkDownloadForm"
+              class="links-form"
+            >
+              <div class="list-of-links">
+                <div class="link">
+                  <input
+                    class="link-text"
+                    id="link-1"
+                    type="url"
+                    placeholder="Insert URL here..."
+                    name="link-1"
+                    autocomplete="off"
+                  />
+                </div>
+                <div class="link">
+                  <input
+                    class="link-text"
+                    id="link-2"
+                    type="url"
+                    placeholder="Insert URL here..."
+                    name="link-2"
+                    autocomplete="off"
+                  />
+                </div>
+                <div class="link">
+                  <input
+                    class="link-text"
+                    id="link-3"
+                    type="url"
+                    placeholder="Insert URL here..."
+                    name="link-3"
+                    autocomplete="off"
+                  />
+                </div>
+                <div class="link">
+                  <input
+                    class="link-text"
+                    id="link-4"
+                    type="url"
+                    placeholder="Insert URL here..."
+                    name="link-4"
+                    autocomplete="off"
+                  />
+                </div>
+                <div class="link">
+                  <input
+                    class="link-text"
+                    id="link-5"
+                    type="url"
+                    placeholder="Insert URL here..."
+                    name="link-5"
+                    autocomplete="off"
+                  />
+                </div>
+                <div class="link">
+                  <input
+                    class="link-text"
+                    id="link-6"
+                    type="url"
+                    placeholder="Insert URL here..."
+                    name="link-6"
+                    autocomplete="off"
+                  />
+                </div>
+                <div class="link">
+                  <input
+                    class="link-text"
+                    id="link-7"
+                    type="url"
+                    placeholder="Insert URL here..."
+                    name="link-7"
+                    autocomplete="off"
+                  />
+                </div>
+                <div class="link">
+                  <input
+                    class="link-text"
+                    id="link-8"
+                    type="url"
+                    placeholder="Insert URL here..."
+                    name="link-8"
+                    autocomplete="off"
+                  />
+                </div>
+                <div class="link">
+                  <input
+                    class="link-text"
+                    id="link-9"
+                    type="url"
+                    placeholder="Insert URL here..."
+                    name="link-9"
+                    autocomplete="off"
+                  />
+                </div>
+                <div class="link">
+                  <input
+                    class="link-text"
+                    id="link-10"
+                    type="url"
+                    placeholder="Insert URL here..."
+                    name="link-10"
+                    autocomplete="off"
+                  />
+                </div>
+              </div>
+              <button
+                type="submit"
+                class="btn btn--form btn--full margin-right-sm"
+              >
+                Download All
+              </button>
+            </form>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container grid grid--footer">
+        <div class="logo-col">
+          <a href="#" class="footer-logo">
+            <h2 class="logo-text">Link Downloader</h2>
+          </a>
+
+          <p class="copyright">
+            Copyright &copy; <span class="year">2025</span> by Link Downloader.
+            All rights reserved.
+          </p>
+        </div>
+
+        <nav class="nav-col">
+          <p class="footer-heading">About</p>
+          <ul class="footer-nav">
+            <li><a class="footer-link" href="#">How it works</a></li>
+            <li><a class="footer-link" href="#">Supported platforms</a></li>
+            <li><a class="footer-link" href="#">Privacy & terms</a></li>
+          </ul>
+        </nav>
+      </div>
+    </footer>
+  </body>
+</html>

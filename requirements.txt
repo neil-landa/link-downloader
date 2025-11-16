@@ -1,0 +1,5 @@
+Flask==3.0.0
+Werkzeug==3.0.1
+yt-dlp==2025.01.26
+Flask-Limiter==3.5.0
+
