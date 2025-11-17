@@ -62,10 +62,15 @@ def download_audio(url, output_dir):
         # Create a safe filename - yt-dlp uses %(title)s.%(ext)s format
         output_path = os.path.join(output_dir, '%(title)s.%(ext)s')
 
-        # Check if cookies file exists
+        # Check if cookies file exists and is valid
         use_cookies = os.path.exists(COOKIES_FILE)
         if use_cookies:
-            print(f"Using cookies file: {COOKIES_FILE}")
+            # Check if cookies file is not empty
+            if os.path.getsize(COOKIES_FILE) == 0:
+                print(f"Warning: Cookies file is empty at {COOKIES_FILE}")
+                use_cookies = False
+            else:
+                print(f"Using cookies file: {COOKIES_FILE}")
         else:
             print(
                 f"Warning: Cookies file not found at {COOKIES_FILE}. Some downloads may fail.")
@@ -169,7 +174,14 @@ def download_audio(url, output_dir):
         if result.returncode == 0:
             return True, None
         else:
-            return False, result.stderr
+            error_msg = result.stderr
+            # Check for common cookie-related errors
+            if 'cookies' in error_msg.lower() or 'sign in' in error_msg.lower() or 'bot' in error_msg.lower():
+                if use_cookies:
+                    error_msg += " (Cookies may be expired or invalid. Try refreshing them.)"
+                else:
+                    error_msg += " (Cookies file not found. Export cookies from your browser.)"
+            return False, error_msg
     except subprocess.TimeoutExpired:
         return False, "Download timeout"
     except FileNotFoundError:
