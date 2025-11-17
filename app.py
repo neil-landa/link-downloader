@@ -105,9 +105,11 @@ def download_audio(url, output_dir):
                 f"Warning: Cookies file not found at {COOKIES_FILE}. Some downloads may fail.")
 
         # Common options for all commands
+        # Optimized for 1GB RAM: larger buffer for efficiency, no rate limit for speed
         common_opts = [
-            '--buffer-size', '16K',
-            '--limit-rate', '1M',
+            # Increased from 16K for better performance (uses ~64KB RAM)
+            '--buffer-size', '64K',
+            # Removed --limit-rate to use full available bandwidth
             '--no-warnings',  # Reduce noise in logs
             '-x',  # Extract audio only
             '--audio-format', 'm4a',
@@ -342,9 +344,12 @@ def download():
 if __name__ == '__main__':
     # Development mode
     import os
+    environment = os.getenv('ENVIRONMENT', 'production')
     debug_mode = os.getenv('FLASK_ENV') != 'production'
 
-    print("Starting Link Downloader server...")
-    print("Make sure yt-dlp is installed: pip install yt-dlp")
-    print("Server will be available at http://localhost:5000")
+    print(f"Starting Link Downloader server...")
+    print(f"Environment: {environment}")
+    print(f"Debug mode: {debug_mode}")
+    print(f"Make sure yt-dlp is installed: pip install yt-dlp")
+    print(f"Server will be available at http://localhost:5000")
     app.run(debug=debug_mode, host='0.0.0.0', port=5000)
