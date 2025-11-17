@@ -141,6 +141,12 @@ if (downloadForm) {
         window.URL.revokeObjectURL(url);
         document.body.removeChild(a);
 
+        // Clear all form inputs after successful download
+        const allInputs = downloadForm.querySelectorAll('input[type="url"]');
+        allInputs.forEach((input) => {
+          input.value = "";
+        });
+
         submitBtn.textContent = "Download Complete!";
         setTimeout(() => {
           submitBtn.textContent = originalText;
