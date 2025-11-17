@@ -24,6 +24,10 @@ app = Flask(__name__, static_folder='.', static_url_path='')
 DOWNLOAD_DIR = os.path.join(os.path.dirname(__file__), 'downloads')
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+# Cookie file path for YouTube authentication
+# Export cookies from your browser and save to this location
+COOKIES_FILE = os.path.join(os.path.dirname(__file__), 'cookies.txt')
+
 
 def download_audio(url, output_dir):
     """Download audio from a URL using yt-dlp"""
@@ -45,6 +49,14 @@ def download_audio(url, output_dir):
         # Create a safe filename - yt-dlp uses %(title)s.%(ext)s format
         output_path = os.path.join(output_dir, '%(title)s.%(ext)s')
 
+        # Check if cookies file exists
+        use_cookies = os.path.exists(COOKIES_FILE)
+        if use_cookies:
+            print(f"Using cookies file: {COOKIES_FILE}")
+        else:
+            print(
+                f"Warning: Cookies file not found at {COOKIES_FILE}. Some downloads may fail.")
+
         # Common options for all commands
         common_opts = [
             '--buffer-size', '16K',
@@ -55,6 +67,10 @@ def download_audio(url, output_dir):
             '-o', output_path,
             url
         ]
+
+        # Add cookies if available
+        if use_cookies:
+            common_opts = ['--cookies', COOKIES_FILE] + common_opts
 
         # Strategy: Try multiple approaches for YouTube to bypass bot detection
         # 1. Try default player client (requires Node.js) - most reliable
