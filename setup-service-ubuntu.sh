@@ -1,7 +1,7 @@
 #!/bin/bash
 # Set up systemd service and Nginx for Ubuntu
 
-APP_DIR="/home/ubuntu/link-downloader"
+APP_DIR="/home/ubuntu/www/link-downloader"
 
 # Create systemd service
 echo "Creating systemd service..."
@@ -33,6 +33,34 @@ server {
     proxy_connect_timeout 600s;
     proxy_send_timeout 600s;
     client_max_body_size 500M;
+
+    # Serve static files directly from Nginx (BEST PRACTICE - faster than Flask)
+    # This handles CSS, JS, images, fonts, etc.
+    location ~* \.(css|js|jpg|jpeg|png|gif|ico|svg|webp|woff|woff2|ttf|eot|manifest)$ {
+        root /home/ubuntu/www/link-downloader;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+        access_log off;  # Don't log static file requests
+    }
+    
+    # Serve static directories
+    location /css/ {
+        root /home/ubuntu/www/link-downloader;
+        expires 30d;
+        add_header Cache-Control "public";
+    }
+    
+    location /js/ {
+        root /home/ubuntu/www/link-downloader;
+        expires 30d;
+        add_header Cache-Control "public";
+    }
+    
+    location /img/ {
+        root /home/ubuntu/www/link-downloader;
+        expires 30d;
+        add_header Cache-Control "public";
+    }
 
     location / {
         proxy_pass http://127.0.0.1:5000;

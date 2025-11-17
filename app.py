@@ -82,6 +82,19 @@ def index():
     return send_file('index.html')
 
 
+@app.route('/<path:path>')
+def serve_static(path):
+    """Serve static files (CSS, JS, images)"""
+    # Security: prevent directory traversal
+    if '..' in path or path.startswith('/'):
+        return "Not found", 404
+
+    file_path = os.path.join(os.path.dirname(__file__), path)
+    if os.path.exists(file_path) and os.path.isfile(file_path):
+        return send_file(file_path)
+    return "Not found", 404
+
+
 @app.route('/download', methods=['POST'])
 # @limiter.limit("5 per minute")  # Uncomment to enable rate limiting
 def download():
