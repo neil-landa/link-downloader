@@ -42,6 +42,35 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 COOKIES_FILE = os.path.join(os.path.dirname(__file__), 'cookies.txt')
 
 
+def clean_youtube_url(url):
+    """Clean YouTube URLs by removing query parameters after the video ID"""
+    if not url:
+        return url
+
+    url = url.strip()
+
+    # Check if it's a YouTube URL
+    if 'youtube.com' in url or 'youtu.be' in url:
+        # Handle youtube.com/watch?v=VIDEO_ID&other_params
+        if 'watch?v=' in url:
+            # Split on '?' to get base URL and query string
+            base_url = url.split('?')[0]
+            query_string = url.split('?')[1] if '?' in url else ''
+
+            # Extract just the v= parameter
+            if 'v=' in query_string:
+                video_id = query_string.split('v=')[1].split('&')[0]
+                return f"{base_url}?v={video_id}"
+
+        # Handle youtu.be/VIDEO_ID?other_params
+        elif 'youtu.be/' in url:
+            # Split on '?' to remove query parameters
+            return url.split('?')[0]
+
+    # Return original URL if not YouTube or doesn't match patterns
+    return url
+
+
 def download_audio(url, output_dir):
     """Download audio from a URL using yt-dlp"""
     try:
@@ -222,6 +251,8 @@ def download():
             if link_key in request.form:
                 url = request.form[link_key].strip()
                 if url:
+                    # Clean YouTube URLs to remove extra query parameters
+                    url = clean_youtube_url(url)
                     links.append(url)
 
         print(f"Received {len(links)} links to download")
