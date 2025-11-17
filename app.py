@@ -3,8 +3,7 @@ import subprocess
 import zipfile
 import tempfile
 import shutil
-from flask import Flask, request, send_file, render_template, jsonify
-from werkzeug.utils import secure_filename
+from flask import Flask, request, send_file, jsonify
 import threading
 import time
 
@@ -74,19 +73,41 @@ def clean_youtube_url(url):
 def download_audio(url, output_dir):
     """Download audio from a URL using yt-dlp"""
     try:
-        # Find yt-dlp in PATH or common locations
-        import shutil
+        # Find yt-dlp in PATH (should work now that PATH includes ~/.local/bin)
         yt_dlp_path = shutil.which('yt-dlp')
+
+        # Fallback: if PATH doesn't work, try common locations (safety net)
         if not yt_dlp_path:
-            # Try common locations
-            for path in ['/usr/local/bin/yt-dlp', '/usr/bin/yt-dlp',
-                         '/home/ubuntu/.local/bin/yt-dlp', 'yt-dlp']:
+            for path in ['/home/ubuntu/.local/bin/yt-dlp', '/home/ec2-user/.local/bin/yt-dlp',
+                         '/usr/local/bin/yt-dlp', '/usr/bin/yt-dlp', 'yt-dlp']:
                 if os.path.exists(path) or path == 'yt-dlp':
                     yt_dlp_path = path
                     break
 
         if not yt_dlp_path or (yt_dlp_path != 'yt-dlp' and not os.path.exists(yt_dlp_path)):
             return False, "yt-dlp not found. Please install it: pip install yt-dlp"
+
+        # Check yt-dlp version (for debugging)
+        try:
+            version_check = subprocess.run(
+                [yt_dlp_path, '--version'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if version_check.returncode == 0:
+                version = version_check.stdout.strip()
+                print(f"Using yt-dlp version: {version} from: {yt_dlp_path}")
+                # Warn if using system-installed version (might be old)
+                if '/usr/bin/yt-dlp' in yt_dlp_path:
+                    print(
+                        f"Warning: Using system-installed yt-dlp. Consider using pip version: pip install --upgrade yt-dlp")
+                # Warn if version seems old
+                if version and not version.startswith('2025') and not version.startswith('2024'):
+                    print(
+                        f"Warning: yt-dlp version {version} may be outdated. Consider updating: pip install --upgrade yt-dlp")
+        except Exception as e:
+            print(f"Warning: Could not check yt-dlp version: {e}")
 
         # Create a safe filename - yt-dlp uses %(title)s.%(ext)s format
         output_path = os.path.join(output_dir, '%(title)s.%(ext)s')
@@ -105,9 +126,11 @@ def download_audio(url, output_dir):
                 f"Warning: Cookies file not found at {COOKIES_FILE}. Some downloads may fail.")
 
         # Common options for all commands
+        # Optimized for 1GB RAM: larger buffer for efficiency, no rate limit for speed
         common_opts = [
-            '--buffer-size', '16K',
-            '--limit-rate', '1M',
+            # Increased from 16K for better performance (uses ~64KB RAM)
+            '--buffer-size', '64K',
+            # Removed --limit-rate to use full available bandwidth
             '--no-warnings',  # Reduce noise in logs
             '-x',  # Extract audio only
             '--audio-format', 'm4a',
@@ -186,6 +209,35 @@ def download_audio(url, output_dir):
 
                 result = subprocess.run(
                     cmd_web,
+                    capture_output=True,
+                    text=True,
+                    timeout=600
+                )
+
+            # Try 5: If format error, try without specifying format (let yt-dlp choose best)
+            if result.returncode != 0 and ('format is not available' in result.stderr.lower() or
+                                           'requested format' in result.stderr.lower()):
+                print(
+                    f"Format error detected, trying with best available audio format for: {url}")
+                # Use fallback options (no specific format - let yt-dlp choose)
+                fallback_opts = [
+                    '--buffer-size', '64K',
+                    '--no-warnings',
+                    '-x',  # Extract audio only (no format specified)
+                    '-o', output_path,
+                    url
+                ]
+                if use_cookies:
+                    fallback_opts = ['--cookies', COOKIES_FILE] + fallback_opts
+
+                # Try Android client with fallback format
+                cmd_fallback = [
+                    yt_dlp_path,
+                    '--extractor-args', 'youtube:player_client=android',
+                ] + fallback_opts
+
+                result = subprocess.run(
+                    cmd_fallback,
                     capture_output=True,
                     text=True,
                     timeout=600
@@ -341,10 +393,12 @@ def download():
 
 if __name__ == '__main__':
     # Development mode
-    import os
+    environment = os.getenv('ENVIRONMENT', 'production')
     debug_mode = os.getenv('FLASK_ENV') != 'production'
 
-    print("Starting Link Downloader server...")
-    print("Make sure yt-dlp is installed: pip install yt-dlp")
-    print("Server will be available at http://localhost:5000")
+    print(f"Starting Link Downloader server...")
+    print(f"Environment: {environment}")
+    print(f"Debug mode: {debug_mode}")
+    print(f"Make sure yt-dlp is installed: pip install yt-dlp")
+    print(f"Server will be available at http://localhost:5000")
     app.run(debug=debug_mode, host='0.0.0.0', port=5000)
