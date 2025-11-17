@@ -45,64 +45,94 @@ def download_audio(url, output_dir):
         # Create a safe filename - yt-dlp uses %(title)s.%(ext)s format
         output_path = os.path.join(output_dir, '%(title)s.%(ext)s')
 
-        # Base command without impersonate (simpler, less likely to trigger bot detection)
-        # For YouTube: Use Android client to avoid JS runtime requirement
-        base_cmd = [
-            yt_dlp_path,
-            '--extractor-args', 'youtube:player_client=android',
+        # Common options for all commands
+        common_opts = [
             '--buffer-size', '16K',
             '--limit-rate', '1M',
-            '-x',
+            '--no-warnings',  # Reduce noise in logs
+            '--extract-flat', 'false',  # Ensure full extraction
+            '-x',  # Extract audio only
             '--audio-format', 'm4a',
             '-o', output_path,
             url
         ]
 
-        # Try without impersonate first (less suspicious to YouTube)
-        result = subprocess.run(
-            base_cmd,
-            capture_output=True,
-            text=True,
-            timeout=600  # 10 minute timeout per download
-        )
+        # Strategy: Try multiple approaches for YouTube to bypass bot detection
+        # 1. Try default player client (requires Node.js) - most reliable
+        # 2. Try Android client (no Node.js needed)
+        # 3. Try with impersonate as fallback
 
-        # If that fails and it's a YouTube URL, try with impersonate as fallback
-        if result.returncode != 0 and 'youtube' in url.lower():
+        result = None
+        is_youtube = 'youtube' in url.lower()
+
+        if is_youtube:
+            # Try 1: Default player client with Node.js (most reliable, requires Node.js)
             print(
-                f"Standard download failed, trying with impersonate for: {url}")
-            cmd_impersonate = [
+                f"Trying default YouTube player client (requires Node.js) for: {url}")
+            cmd_default = [
                 yt_dlp_path,
-                '--impersonate', 'chrome',
-                '--extractor-args', 'youtube:player_client=android',
-                '--buffer-size', '16K',
-                '--limit-rate', '1M',
-                '-x',
-                '--audio-format', 'm4a',
-                '-o', output_path,
-                url
-            ]
+                '--extractor-args', 'youtube:player_client=default',
+            ] + common_opts
+
             result = subprocess.run(
-                cmd_impersonate,
+                cmd_default,
                 capture_output=True,
                 text=True,
                 timeout=600
             )
 
-        # If still failing, try web client as last resort
-        if result.returncode != 0 and 'youtube' in url.lower():
-            print(f"Android client failed, trying web client for: {url}")
-            cmd_web = [
-                yt_dlp_path,
-                '--extractor-args', 'youtube:player_client=web',
-                '--buffer-size', '16K',
-                '--limit-rate', '1M',
-                '-x',
-                '--audio-format', 'm4a',
-                '-o', output_path,
-                url
-            ]
+            # Try 2: Android client (no Node.js needed, less likely to trigger bot detection)
+            if result.returncode != 0:
+                print(
+                    f"Default client failed, trying Android client for: {url}")
+                cmd_android = [
+                    yt_dlp_path,
+                    '--extractor-args', 'youtube:player_client=android',
+                ] + common_opts
+
+                result = subprocess.run(
+                    cmd_android,
+                    capture_output=True,
+                    text=True,
+                    timeout=600
+                )
+
+            # Try 3: Android client with impersonate
+            if result.returncode != 0:
+                print(
+                    f"Android client failed, trying with impersonate for: {url}")
+                cmd_impersonate = [
+                    yt_dlp_path,
+                    '--impersonate', 'chrome',
+                    '--extractor-args', 'youtube:player_client=android',
+                ] + common_opts
+
+                result = subprocess.run(
+                    cmd_impersonate,
+                    capture_output=True,
+                    text=True,
+                    timeout=600
+                )
+
+            # Try 4: Web client as last resort
+            if result.returncode != 0:
+                print(f"Trying web client as last resort for: {url}")
+                cmd_web = [
+                    yt_dlp_path,
+                    '--extractor-args', 'youtube:player_client=web',
+                ] + common_opts
+
+                result = subprocess.run(
+                    cmd_web,
+                    capture_output=True,
+                    text=True,
+                    timeout=600
+                )
+        else:
+            # For non-YouTube URLs, use standard command
+            cmd_standard = [yt_dlp_path] + common_opts
             result = subprocess.run(
-                cmd_web,
+                cmd_standard,
                 capture_output=True,
                 text=True,
                 timeout=600
