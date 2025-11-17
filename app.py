@@ -10,6 +10,18 @@ import time
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 
+# Error handler to ensure JSON responses for API errors
+
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'error': 'Not found'}), 404
+
 # Rate limiting (optional - uncomment to enable)
 # from flask_limiter import Limiter
 # from flask_limiter.util import get_remote_address
@@ -19,6 +31,7 @@ app = Flask(__name__, static_folder='.', static_url_path='')
 #     key_func=get_remote_address,
 #     default_limits=["100 per hour", "10 per minute"]
 # )
+
 
 # Create a temporary directory for downloads
 DOWNLOAD_DIR = os.path.join(os.path.dirname(__file__), 'downloads')
