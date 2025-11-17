@@ -45,13 +45,10 @@ def download_audio(url, output_dir):
         # Create a safe filename - yt-dlp uses %(title)s.%(ext)s format
         output_path = os.path.join(output_dir, '%(title)s.%(ext)s')
 
-        # Use yt-dlp with impersonate to bypass restrictions
-        # Requires: sudo apt-get install -y curl libcurl4-openssl-dev
-        # For YouTube: Use player_client to avoid JS runtime requirement
-        cmd = [
+        # Base command without impersonate (simpler, less likely to trigger bot detection)
+        # For YouTube: Use Android client to avoid JS runtime requirement
+        base_cmd = [
             yt_dlp_path,
-            '--impersonate', 'chrome',
-            # Use Android client (no JS needed)
             '--extractor-args', 'youtube:player_client=android',
             '--buffer-size', '16K',
             '--limit-rate', '1M',
@@ -61,19 +58,41 @@ def download_audio(url, output_dir):
             url
         ]
 
+        # Try without impersonate first (less suspicious to YouTube)
         result = subprocess.run(
-            cmd,
+            base_cmd,
             capture_output=True,
             text=True,
             timeout=600  # 10 minute timeout per download
         )
 
-        # If Android client fails, try web client as fallback
+        # If that fails and it's a YouTube URL, try with impersonate as fallback
+        if result.returncode != 0 and 'youtube' in url.lower():
+            print(
+                f"Standard download failed, trying with impersonate for: {url}")
+            cmd_impersonate = [
+                yt_dlp_path,
+                '--impersonate', 'chrome',
+                '--extractor-args', 'youtube:player_client=android',
+                '--buffer-size', '16K',
+                '--limit-rate', '1M',
+                '-x',
+                '--audio-format', 'm4a',
+                '-o', output_path,
+                url
+            ]
+            result = subprocess.run(
+                cmd_impersonate,
+                capture_output=True,
+                text=True,
+                timeout=600
+            )
+
+        # If still failing, try web client as last resort
         if result.returncode != 0 and 'youtube' in url.lower():
             print(f"Android client failed, trying web client for: {url}")
             cmd_web = [
                 yt_dlp_path,
-                '--impersonate', 'chrome',
                 '--extractor-args', 'youtube:player_client=web',
                 '--buffer-size', '16K',
                 '--limit-rate', '1M',
