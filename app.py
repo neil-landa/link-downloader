@@ -28,12 +28,26 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 def download_audio(url, output_dir):
     """Download audio from a URL using yt-dlp"""
     try:
+        # Find yt-dlp in PATH or common locations
+        import shutil
+        yt_dlp_path = shutil.which('yt-dlp')
+        if not yt_dlp_path:
+            # Try common locations
+            for path in ['/usr/local/bin/yt-dlp', '/usr/bin/yt-dlp',
+                         '/home/ubuntu/.local/bin/yt-dlp', 'yt-dlp']:
+                if os.path.exists(path) or path == 'yt-dlp':
+                    yt_dlp_path = path
+                    break
+
+        if not yt_dlp_path or (yt_dlp_path != 'yt-dlp' and not os.path.exists(yt_dlp_path)):
+            return False, "yt-dlp not found. Please install it: pip install yt-dlp"
+
         # Create a safe filename - yt-dlp uses %(title)s.%(ext)s format
         output_path = os.path.join(output_dir, '%(title)s.%(ext)s')
 
         # Use the same command as your Python script
         cmd = [
-            'yt-dlp',
+            yt_dlp_path,
             '--impersonate', 'chrome',
             '--buffer-size', '16K',
             '--limit-rate', '1M',
