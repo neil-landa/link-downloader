@@ -103,7 +103,7 @@ if (downloadForm) {
     // Get the submit button
     const submitBtn = downloadForm.querySelector('button[type="submit"]');
     const originalText = submitBtn.textContent;
-    
+
     // Show loading state
     submitBtn.disabled = true;
     submitBtn.textContent = "Downloading... Please wait";
@@ -113,7 +113,8 @@ if (downloadForm) {
     if (!errorDiv) {
       errorDiv = document.createElement("div");
       errorDiv.className = "error-message";
-      errorDiv.style.cssText = "margin-top: 2rem; padding: 1.6rem; background-color: #fee; border: 2px solid #fcc; border-radius: 9px; color: #c33; display: none;";
+      errorDiv.style.cssText =
+        "margin-top: 2rem; padding: 1.6rem; background-color: #fee; border: 2px solid #fcc; border-radius: 9px; color: #c33; display: none;";
       downloadForm.appendChild(errorDiv);
     }
     errorDiv.style.display = "none";
@@ -139,23 +140,45 @@ if (downloadForm) {
         a.click();
         window.URL.revokeObjectURL(url);
         document.body.removeChild(a);
-        
+
         submitBtn.textContent = "Download Complete!";
         setTimeout(() => {
           submitBtn.textContent = originalText;
           submitBtn.disabled = false;
         }, 2000);
       } else {
-        // Handle error response
-        const errorData = await response.json();
-        errorDiv.textContent = `Error: ${errorData.error || "Unknown error occurred"}`;
+        // Handle error response - try to parse as JSON, fallback to text
+        let errorMessage = "Unknown error occurred";
+        try {
+          const contentType = response.headers.get("content-type");
+          if (contentType && contentType.includes("application/json")) {
+            const errorData = await response.json();
+            errorMessage = errorData.error || errorMessage;
+          } else {
+            // If not JSON, get text response
+            const text = await response.text();
+            // Try to extract error from HTML if it's an error page
+            if (text.includes("error") || text.includes("Error")) {
+              errorMessage =
+                "Server error occurred. Check server logs for details.";
+            } else {
+              errorMessage = text.substring(0, 200); // Limit length
+            }
+          }
+        } catch (parseError) {
+          console.error("Error parsing response:", parseError);
+          errorMessage = `Server returned error (status ${response.status})`;
+        }
+        errorDiv.textContent = `Error: ${errorMessage}`;
         errorDiv.style.display = "block";
         submitBtn.textContent = originalText;
         submitBtn.disabled = false;
       }
     } catch (error) {
       console.error("Download error:", error);
-      errorDiv.textContent = `Error: ${error.message || "Failed to connect to server"}`;
+      errorDiv.textContent = `Error: ${
+        error.message || "Failed to connect to server"
+      }`;
       errorDiv.style.display = "block";
       submitBtn.textContent = originalText;
       submitBtn.disabled = false;
