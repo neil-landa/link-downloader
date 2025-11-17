@@ -45,10 +45,14 @@ def download_audio(url, output_dir):
         # Create a safe filename - yt-dlp uses %(title)s.%(ext)s format
         output_path = os.path.join(output_dir, '%(title)s.%(ext)s')
 
-        # Use the same command as your Python script
+        # Use yt-dlp with impersonate to bypass restrictions
+        # Requires: sudo apt-get install -y curl libcurl4-openssl-dev
+        # For YouTube: Use player_client to avoid JS runtime requirement
         cmd = [
             yt_dlp_path,
             '--impersonate', 'chrome',
+            # Use Android client (no JS needed)
+            '--extractor-args', 'youtube:player_client=android',
             '--buffer-size', '16K',
             '--limit-rate', '1M',
             '-x',
@@ -63,6 +67,27 @@ def download_audio(url, output_dir):
             text=True,
             timeout=600  # 10 minute timeout per download
         )
+
+        # If Android client fails, try web client as fallback
+        if result.returncode != 0 and 'youtube' in url.lower():
+            print(f"Android client failed, trying web client for: {url}")
+            cmd_web = [
+                yt_dlp_path,
+                '--impersonate', 'chrome',
+                '--extractor-args', 'youtube:player_client=web',
+                '--buffer-size', '16K',
+                '--limit-rate', '1M',
+                '-x',
+                '--audio-format', 'm4a',
+                '-o', output_path,
+                url
+            ]
+            result = subprocess.run(
+                cmd_web,
+                capture_output=True,
+                text=True,
+                timeout=600
+            )
 
         if result.returncode == 0:
             return True, None
@@ -99,6 +124,7 @@ def serve_static(path):
 # @limiter.limit("5 per minute")  # Uncomment to enable rate limiting
 def download():
     """Handle the download request"""
+    session_dir = None
     try:
         # Get all links from the form
         links = []
@@ -123,13 +149,22 @@ def download():
         files_before = set(os.listdir(session_dir))
 
         for url in links:
-            print(f"Downloading: {url}")
-            success, error = download_audio(url, session_dir)
-            if not success:
-                print(f"Download failed for {url}: {error}")
-                errors.append(f"{url}: {error}")
-            else:
-                print(f"Successfully downloaded: {url}")
+            try:
+                print(f"Downloading: {url}")
+                success, error = download_audio(url, session_dir)
+                if not success:
+                    print(f"Download failed for {url}: {error}")
+                    # Truncate long error messages for user display
+                    error_msg = str(error)[:200] if len(
+                        str(error)) > 200 else str(error)
+                    errors.append(f"{url}: {error_msg}")
+                else:
+                    print(f"Successfully downloaded: {url}")
+            except Exception as e:
+                # Catch individual download errors so one doesn't stop the others
+                error_msg = f"Unexpected error: {str(e)[:200]}"
+                print(f"Exception downloading {url}: {error_msg}")
+                errors.append(f"{url}: {error_msg}")
 
         # Wait a moment for all downloads to complete
         time.sleep(3)
@@ -143,7 +178,11 @@ def download():
         if not all_files:
             error_msg = 'No files were downloaded.'
             if errors:
-                error_msg += ' Errors: ' + '; '.join(errors)
+                # Limit total error message length
+                error_msg += ' Errors: ' + \
+                    '; '.join(errors[:5])  # Show max 5 errors
+                if len(errors) > 5:
+                    error_msg += f' (and {len(errors) - 5} more errors)'
             return jsonify({'error': error_msg}), 500
 
         # Create a zip file
@@ -164,17 +203,20 @@ def download():
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
+        # Log full error to server logs
         print(f"Error in download route: {error_trace}")
-        return jsonify({'error': f'Server error: {str(e)}'}), 500
+        # Return user-friendly error (don't expose full traceback)
+        return jsonify({'error': f'Server error: {str(e)[:200]}'}), 500
 
     finally:
         # Clean up after a delay (give time for file to be sent)
-        def cleanup():
-            time.sleep(10)  # Wait 10 seconds before cleanup
-            if os.path.exists(session_dir):
-                shutil.rmtree(session_dir, ignore_errors=True)
+        if session_dir:
+            def cleanup():
+                time.sleep(10)  # Wait 10 seconds before cleanup
+                if os.path.exists(session_dir):
+                    shutil.rmtree(session_dir, ignore_errors=True)
 
-        threading.Thread(target=cleanup, daemon=True).start()
+            threading.Thread(target=cleanup, daemon=True).start()
 
 
 if __name__ == '__main__':
