@@ -50,7 +50,6 @@ def download_audio(url, output_dir):
             '--buffer-size', '16K',
             '--limit-rate', '1M',
             '--no-warnings',  # Reduce noise in logs
-            '--extract-flat', 'false',  # Ensure full extraction
             '-x',  # Extract audio only
             '--audio-format', 'm4a',
             '-o', output_path,
