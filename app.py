@@ -7,6 +7,7 @@ from flask import Flask, request, send_file, jsonify
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 
@@ -389,37 +390,51 @@ def download():
         # Each download uses ~64KB buffer + process overhead (~50-100MB per download)
         MAX_PARALLEL_DOWNLOADS = 2  # Safe for 1GB RAM, can increase to 3 if needed
 
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Starting parallel downloads: {len(links)} links, {MAX_PARALLEL_DOWNLOADS} at a time")
+
         def download_with_error_handling(url):
             """Download a single URL and return (url, success, error)"""
             try:
-                print(f"Downloading: {url}")
+                print(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] [PARALLEL] Downloading: {url}")
                 success, error = download_audio(url, session_dir)
                 if not success:
-                    print(f"Download failed for {url}: {error}")
+                    print(
+                        f"[{datetime.now().strftime('%H:%M:%S')}] [PARALLEL] Download failed for {url}: {error}")
                     # Truncate long error messages for user display
                     error_msg = str(error)[:200] if len(
                         str(error)) > 200 else str(error)
                     return (url, False, error_msg)
                 else:
-                    print(f"Successfully downloaded: {url}")
+                    print(
+                        f"[{datetime.now().strftime('%H:%M:%S')}] [PARALLEL] Successfully downloaded: {url}")
                     return (url, True, None)
             except Exception as e:
                 # Catch individual download errors so one doesn't stop the others
                 error_msg = f"Unexpected error: {str(e)[:200]}"
-                print(f"Exception downloading {url}: {error_msg}")
+                print(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] [PARALLEL] Exception downloading {url}: {error_msg}")
                 return (url, False, error_msg)
 
         # Execute downloads in parallel
+        start_time = time.time()
         with ThreadPoolExecutor(max_workers=MAX_PARALLEL_DOWNLOADS) as executor:
             # Submit all download tasks
             future_to_url = {executor.submit(
                 download_with_error_handling, url): url for url in links}
 
             # Collect results as they complete
+            completed_count = 0
             for future in as_completed(future_to_url):
                 url, success, error = future.result()
+                completed_count += 1
                 if not success:
                     errors.append(f"{url}: {error}")
+                print(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] Progress: {completed_count}/{len(links)} downloads completed")
+
+        elapsed_time = time.time() - start_time
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] All downloads completed in {elapsed_time:.1f} seconds ({len(links)} links, {MAX_PARALLEL_DOWNLOADS} parallel)")
 
         # Wait a moment for all downloads to fully complete and files to be written
         time.sleep(2)
