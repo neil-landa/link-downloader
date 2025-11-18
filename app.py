@@ -388,7 +388,7 @@ def download():
         # Parallel download configuration
         # Use 2-3 workers for 1GB RAM (safe, allows 2-3x speedup)
         # Each download uses ~64KB buffer + process overhead (~50-100MB per download)
-        MAX_PARALLEL_DOWNLOADS = 2  # Safe for 1GB RAM, can increase to 3 if needed
+        MAX_PARALLEL_DOWNLOADS = 4  # 3 is safe for 1GB RAM, have not tested 5
 
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Starting parallel downloads: {len(links)} links, {MAX_PARALLEL_DOWNLOADS} at a time")
 
