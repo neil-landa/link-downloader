@@ -6,6 +6,8 @@ import shutil
 from flask import Flask, request, send_file, jsonify
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 
@@ -120,7 +122,16 @@ def download_audio(url, output_dir):
                 print(f"Warning: Cookies file is empty at {COOKIES_FILE}")
                 use_cookies = False
             else:
-                print(f"Using cookies file: {COOKIES_FILE}")
+                # Get file modification time for logging
+                try:
+                    mtime = os.path.getmtime(COOKIES_FILE)
+                    mtime_str = time.strftime(
+                        '%Y-%m-%d %H:%M:%S', time.localtime(mtime))
+                    file_size = os.path.getsize(COOKIES_FILE)
+                    print(
+                        f"Using cookies file: {COOKIES_FILE} (size: {file_size} bytes, modified: {mtime_str})")
+                except Exception:
+                    print(f"Using cookies file: {COOKIES_FILE}")
         else:
             print(
                 f"Warning: Cookies file not found at {COOKIES_FILE}. Some downloads may fail.")
@@ -271,10 +282,53 @@ def download_audio(url, output_dir):
         return False, str(e)
 
 
+# Track active downloads
+ACTIVE_DOWNLOADS = set()
+DOWNLOAD_LOCK_FILE = os.path.join(
+    os.path.dirname(__file__), '.download_in_progress')
+
+
 @app.route('/')
 def index():
     """Serve the main HTML page"""
     return send_file('index.html')
+
+
+@app.route('/status', methods=['GET'])
+def status():
+    """Check if downloads are in progress - safe to restart service"""
+    try:
+        # Check if lock file exists (indicates download in progress)
+        has_lock_file = os.path.exists(DOWNLOAD_LOCK_FILE)
+
+        # Check if downloads directory has recent activity (within last 5 minutes)
+        recent_activity = False
+        if os.path.exists(DOWNLOAD_DIR):
+            try:
+                # Check for directories modified in last 5 minutes
+                current_time = time.time()
+                for item in os.listdir(DOWNLOAD_DIR):
+                    item_path = os.path.join(DOWNLOAD_DIR, item)
+                    if os.path.isdir(item_path):
+                        # Check modification time
+                        mtime = os.path.getmtime(item_path)
+                        if current_time - mtime < 300:  # 5 minutes
+                            recent_activity = True
+                            break
+            except Exception:
+                pass
+
+        is_busy = has_lock_file or recent_activity or len(ACTIVE_DOWNLOADS) > 0
+
+        return jsonify({
+            'status': 'busy' if is_busy else 'idle',
+            'active_downloads': len(ACTIVE_DOWNLOADS),
+            'has_lock_file': has_lock_file,
+            'recent_activity': recent_activity,
+            'safe_to_restart': not is_busy
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/<path:path>')
@@ -314,32 +368,76 @@ def download():
 
         # Create a temporary directory for this download session
         session_dir = tempfile.mkdtemp(dir=DOWNLOAD_DIR)
-        # Download all links
+
+        # Create lock file to indicate download in progress
+        try:
+            with open(DOWNLOAD_LOCK_FILE, 'w') as f:
+                f.write(str(time.time()))
+        except Exception:
+            pass  # Non-critical, continue anyway
+
+        # Track this download session
+        ACTIVE_DOWNLOADS.add(session_dir)
+
+        # Download all links in parallel
         errors = []
 
         # Track files before download
         files_before = set(os.listdir(session_dir))
 
-        for url in links:
+        # Parallel download configuration
+        # Use 2-3 workers for 1GB RAM (safe, allows 2-3x speedup)
+        # Each download uses ~64KB buffer + process overhead (~50-100MB per download)
+        MAX_PARALLEL_DOWNLOADS = 4  # 3 is safe for 1GB RAM, have not tested 5
+
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Starting parallel downloads: {len(links)} links, {MAX_PARALLEL_DOWNLOADS} at a time")
+
+        def download_with_error_handling(url):
+            """Download a single URL and return (url, success, error)"""
             try:
-                print(f"Downloading: {url}")
+                print(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] [PARALLEL] Downloading: {url}")
                 success, error = download_audio(url, session_dir)
                 if not success:
-                    print(f"Download failed for {url}: {error}")
+                    print(
+                        f"[{datetime.now().strftime('%H:%M:%S')}] [PARALLEL] Download failed for {url}: {error}")
                     # Truncate long error messages for user display
                     error_msg = str(error)[:200] if len(
                         str(error)) > 200 else str(error)
-                    errors.append(f"{url}: {error_msg}")
+                    return (url, False, error_msg)
                 else:
-                    print(f"Successfully downloaded: {url}")
+                    print(
+                        f"[{datetime.now().strftime('%H:%M:%S')}] [PARALLEL] Successfully downloaded: {url}")
+                    return (url, True, None)
             except Exception as e:
                 # Catch individual download errors so one doesn't stop the others
                 error_msg = f"Unexpected error: {str(e)[:200]}"
-                print(f"Exception downloading {url}: {error_msg}")
-                errors.append(f"{url}: {error_msg}")
+                print(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] [PARALLEL] Exception downloading {url}: {error_msg}")
+                return (url, False, error_msg)
 
-        # Wait a moment for all downloads to complete
-        time.sleep(3)
+        # Execute downloads in parallel
+        start_time = time.time()
+        with ThreadPoolExecutor(max_workers=MAX_PARALLEL_DOWNLOADS) as executor:
+            # Submit all download tasks
+            future_to_url = {executor.submit(
+                download_with_error_handling, url): url for url in links}
+
+            # Collect results as they complete
+            completed_count = 0
+            for future in as_completed(future_to_url):
+                url, success, error = future.result()
+                completed_count += 1
+                if not success:
+                    errors.append(f"{url}: {error}")
+                print(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] Progress: {completed_count}/{len(links)} downloads completed")
+
+        elapsed_time = time.time() - start_time
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] All downloads completed in {elapsed_time:.1f} seconds ({len(links)} links, {MAX_PARALLEL_DOWNLOADS} parallel)")
+
+        # Wait a moment for all downloads to fully complete and files to be written
+        time.sleep(2)
 
         # Get all downloaded files (files that weren't there before)
         files_after = set(os.listdir(session_dir))
@@ -387,6 +485,17 @@ def download():
                 time.sleep(10)  # Wait 10 seconds before cleanup
                 if os.path.exists(session_dir):
                     shutil.rmtree(session_dir, ignore_errors=True)
+
+                # Remove from active downloads
+                ACTIVE_DOWNLOADS.discard(session_dir)
+
+                # Remove lock file if no more active downloads
+                if len(ACTIVE_DOWNLOADS) == 0:
+                    try:
+                        if os.path.exists(DOWNLOAD_LOCK_FILE):
+                            os.remove(DOWNLOAD_LOCK_FILE)
+                    except Exception:
+                        pass  # Non-critical
 
             threading.Thread(target=cleanup, daemon=True).start()
 
