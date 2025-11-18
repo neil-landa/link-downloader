@@ -24,3 +24,9 @@ instance/
 .DS_Store
 Thumbs.db
 
+# Application lock files
+.download_in_progress
+
+# Logs
+logs/
+*.log
