@@ -6,6 +6,7 @@ import shutil
 from flask import Flask, request, send_file, jsonify
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 
@@ -377,13 +378,19 @@ def download():
         # Track this download session
         ACTIVE_DOWNLOADS.add(session_dir)
 
-        # Download all links
+        # Download all links in parallel
         errors = []
 
         # Track files before download
         files_before = set(os.listdir(session_dir))
 
-        for url in links:
+        # Parallel download configuration
+        # Use 2-3 workers for 1GB RAM (safe, allows 2-3x speedup)
+        # Each download uses ~64KB buffer + process overhead (~50-100MB per download)
+        MAX_PARALLEL_DOWNLOADS = 2  # Safe for 1GB RAM, can increase to 3 if needed
+
+        def download_with_error_handling(url):
+            """Download a single URL and return (url, success, error)"""
             try:
                 print(f"Downloading: {url}")
                 success, error = download_audio(url, session_dir)
@@ -392,17 +399,30 @@ def download():
                     # Truncate long error messages for user display
                     error_msg = str(error)[:200] if len(
                         str(error)) > 200 else str(error)
-                    errors.append(f"{url}: {error_msg}")
+                    return (url, False, error_msg)
                 else:
                     print(f"Successfully downloaded: {url}")
+                    return (url, True, None)
             except Exception as e:
                 # Catch individual download errors so one doesn't stop the others
                 error_msg = f"Unexpected error: {str(e)[:200]}"
                 print(f"Exception downloading {url}: {error_msg}")
-                errors.append(f"{url}: {error_msg}")
+                return (url, False, error_msg)
 
-        # Wait a moment for all downloads to complete
-        time.sleep(3)
+        # Execute downloads in parallel
+        with ThreadPoolExecutor(max_workers=MAX_PARALLEL_DOWNLOADS) as executor:
+            # Submit all download tasks
+            future_to_url = {executor.submit(
+                download_with_error_handling, url): url for url in links}
+
+            # Collect results as they complete
+            for future in as_completed(future_to_url):
+                url, success, error = future.result()
+                if not success:
+                    errors.append(f"{url}: {error}")
+
+        # Wait a moment for all downloads to fully complete and files to be written
+        time.sleep(2)
 
         # Get all downloaded files (files that weren't there before)
         files_after = set(os.listdir(session_dir))
