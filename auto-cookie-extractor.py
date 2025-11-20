@@ -147,7 +147,7 @@ def extract_cookies_from_browser():
                     'button:has-text("Next"), button#identifierNext').first
                 next_button.click()
                 logger.info("Clicked next after email")
-                time.sleep(3)
+                time.sleep(5)  # Wait longer for password page to load
 
                 # Check for CAPTCHA
                 if page.locator('iframe[title*="reCAPTCHA"], iframe[title*="CAPTCHA"]').count() > 0:
@@ -200,6 +200,17 @@ def extract_cookies_from_browser():
                         "Skipped passkey prompt, waiting for password field...")
                     time.sleep(2)
 
+                # Check for iframes (Google login often uses iframes)
+                logger.info("Checking for login iframes...")
+                frames = page.frames
+                login_frame = None
+                for frame in frames:
+                    frame_url = frame.url
+                    if 'accounts.google.com' in frame_url or 'google.com/accounts' in frame_url:
+                        logger.info(f"Found Google login iframe: {frame_url}")
+                        login_frame = frame
+                        break
+
                 # Enter password - try multiple selectors and wait longer
                 logger.info("Looking for password field...")
                 password_input = None
@@ -211,14 +222,28 @@ def extract_cookies_from_browser():
                     'input#Passwd'
                 ]
 
-                for selector in password_selectors:
-                    try:
-                        password_input = page.locator(selector).first
-                        password_input.wait_for(state='visible', timeout=5000)
-                        logger.info(f"Found password field using: {selector}")
+                # Try in iframe first if found, then main page
+                search_frames = [login_frame] if login_frame else [None]
+                search_frames.append(None)  # Also try main page
+
+                for search_frame in search_frames:
+                    frame_context = search_frame if search_frame else page
+                    frame_name = "iframe" if search_frame else "main page"
+
+                    for selector in password_selectors:
+                        try:
+                            password_input = frame_context.locator(
+                                selector).first
+                            password_input.wait_for(
+                                state='visible', timeout=5000)
+                            logger.info(
+                                f"Found password field using: {selector} in {frame_name}")
+                            break
+                        except:
+                            continue
+
+                    if password_input:
                         break
-                    except:
-                        continue
 
                 if not password_input:
                     # Take a screenshot for debugging
@@ -246,8 +271,63 @@ def extract_cookies_from_browser():
                     return False
 
                 logger.info("Entering password...")
-                password_input.fill(YOUTUBE_PASSWORD)
-                time.sleep(1)
+                try:
+                    # Wait for field to be ready and clickable
+                    password_input.wait_for(state='visible', timeout=10000)
+
+                    # Click the field first to ensure it's focused and ready
+                    logger.info("Clicking password field to focus...")
+                    password_input.click(timeout=10000)
+                    time.sleep(0.5)
+
+                    # Clear any existing content first
+                    logger.info("Clearing password field...")
+                    password_input.clear(timeout=5000)
+                    time.sleep(0.3)
+
+                    # Use type() instead of fill() - more reliable for password fields
+                    # Type character by character to avoid timing issues
+                    logger.info("Typing password...")
+                    password_input.type(
+                        YOUTUBE_PASSWORD, delay=50, timeout=30000)
+                    time.sleep(1)
+                    logger.info("Password entered successfully")
+                except Exception as e:
+                    # Take screenshot on error
+                    screenshot_path = os.path.join(
+                        LOG_DIR, 'password-fill-error.png')
+                    page.screenshot(path=screenshot_path, full_page=True)
+                    logger.error(f"Error filling password field: {e}")
+                    logger.error(f"Screenshot saved to: {screenshot_path}")
+                    logger.error("Current URL: " + page.url)
+                    logger.error("Page title: " + page.title())
+
+                    # Check if field is still visible
+                    try:
+                        is_visible = password_input.is_visible(timeout=2000)
+                        logger.error(f"Password field visible: {is_visible}")
+                    except:
+                        logger.error("Password field no longer accessible")
+
+                    # Try alternative method - direct fill with longer timeout
+                    try:
+                        logger.info("Trying alternative fill method...")
+                        # Re-locate the field
+                        password_input = page.locator(
+                            'input[type="password"]').first
+                        password_input.wait_for(state='visible', timeout=10000)
+                        password_input.fill(YOUTUBE_PASSWORD, timeout=30000)
+                        time.sleep(1)
+                        logger.info(
+                            "Password entered using alternative method")
+                    except Exception as e2:
+                        logger.error(f"Alternative method also failed: {e2}")
+                        logger.error("This might be due to:")
+                        logger.error(
+                            "1. Password field is in an iframe (Google login uses iframes)")
+                        logger.error("2. Page is still loading")
+                        logger.error("3. Google is showing a different screen")
+                        return False
 
                 # Click next/sign in
                 sign_in_button = page.locator(
