@@ -169,10 +169,83 @@ def extract_cookies_from_browser():
                             "Or use the browser extension method instead")
                         return False
 
-                # Enter password
+                # Check for passkey prompt and skip it
+                logger.info("Checking for passkey prompt...")
+                passkey_selectors = [
+                    'button:has-text("Try another way")',
+                    'button:has-text("Use your password")',
+                    'a:has-text("Try another way")',
+                    'a:has-text("Use your password")',
+                    'button:has-text("Skip")',
+                    'text="Use your password instead"',
+                    'text="Try another way"'
+                ]
+
+                passkey_detected = False
+                for selector in passkey_selectors:
+                    try:
+                        passkey_button = page.locator(selector).first
+                        if passkey_button.is_visible(timeout=3000):
+                            logger.info(
+                                f"Passkey prompt detected, clicking: {selector}")
+                            passkey_button.click()
+                            time.sleep(2)
+                            passkey_detected = True
+                            break
+                    except:
+                        continue
+
+                if passkey_detected:
+                    logger.info(
+                        "Skipped passkey prompt, waiting for password field...")
+                    time.sleep(2)
+
+                # Enter password - try multiple selectors and wait longer
+                logger.info("Looking for password field...")
+                password_input = None
+                password_selectors = [
+                    'input[type="password"]',
+                    'input[name="password"]',
+                    'input[aria-label*="password" i]',
+                    'input#password',
+                    'input#Passwd'
+                ]
+
+                for selector in password_selectors:
+                    try:
+                        password_input = page.locator(selector).first
+                        password_input.wait_for(state='visible', timeout=5000)
+                        logger.info(f"Found password field using: {selector}")
+                        break
+                    except:
+                        continue
+
+                if not password_input:
+                    # Take a screenshot for debugging
+                    screenshot_path = os.path.join(
+                        LOG_DIR, 'password-page-error.png')
+                    page.screenshot(path=screenshot_path)
+                    logger.error(
+                        f"Could not find password field! Screenshot saved to: {screenshot_path}")
+                    logger.error("Current URL: " + page.url)
+                    logger.error("Page title: " + page.title())
+
+                    # Check if we're on a different page
+                    page_content = page.content()
+                    if 'passkey' in page_content.lower() or 'security key' in page_content.lower():
+                        logger.error(
+                            "Passkey prompt detected but could not skip it!")
+                        logger.error(
+                            "Solution: Disable passkeys in your Google account settings, or use an app password")
+                    elif 'verification' in page_content.lower() or 'verify' in page_content.lower():
+                        logger.error(
+                            "Verification step detected! This account may require 2FA.")
+                        logger.error(
+                            "Solution: Use an app password instead of your regular password")
+
+                    return False
+
                 logger.info("Entering password...")
-                password_input = page.locator('input[type="password"]').first
-                password_input.wait_for(state='visible', timeout=10000)
                 password_input.fill(YOUTUBE_PASSWORD)
                 time.sleep(1)
 
