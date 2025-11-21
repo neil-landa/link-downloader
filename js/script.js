@@ -142,10 +142,25 @@ if (downloadForm) {
         document.body.removeChild(a);
 
         // Clear all form inputs after successful download
-        const allInputs = downloadForm.querySelectorAll('input[type="url"]');
+        // Try multiple selectors to ensure we catch all inputs
+        let allInputs = downloadForm.querySelectorAll('input[type="url"]');
+
+        // Fallback: try by class name or name attribute
+        if (allInputs.length === 0) {
+          allInputs = downloadForm.querySelectorAll(
+            '.link-text, input[name^="link-"]'
+          );
+        }
+
+        // Clear all found inputs
         allInputs.forEach((input) => {
           input.value = "";
         });
+
+        // Also try form reset as a final fallback
+        if (allInputs.length === 0) {
+          downloadForm.reset();
+        }
 
         submitBtn.textContent = "Download Complete!";
         setTimeout(() => {
