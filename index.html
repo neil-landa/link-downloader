@@ -43,26 +43,6 @@
   </head>
 
   <body>
-    <header class="header">
-      <a href="https://www.youtube.com/">
-        <h2 class="logo-text">YouTube</h2>
-      </a>
-      <a href="https://soundcloud.com/">
-        <h2 class="logo-text">SoundCloud</h2>
-      </a>
-
-      <nav class="main-nav">
-        <ul class="main-nav-list">
-          <!-- Navigation items can be added here if needed -->
-        </ul>
-      </nav>
-
-      <button class="btn-mobile-nav">
-        <ion-icon class="icon-mobile-nav" name="menu-outline"></ion-icon>
-        <ion-icon class="icon-mobile-nav" name="close-outline"></ion-icon>
-      </button>
-    </header>
-
     <main>
       <section class="section-hero">
         <div class="hero">
@@ -70,8 +50,11 @@
             <h1 class="heading-primary center-text">Link Downloader</h1>
             <p class="hero-description center-text">
               Paste up to 10 video links below. We'll convert them to the
-              highest quality audio format available.
-              <br />Supports YouTube, SoundCloud, and more.
+              highest quality audio format available. Supports
+              <a href="https://www.youtube.com/">YouTube</a>,
+              <a href="https://soundcloud.com/">SoundCloud</a>, and more.
+              <br /><br />Downloading ten 4min songs takes approx. ~1min. Max
+              file size of each file is 100MB.
             </p>
             <form
               method="POST"
@@ -192,29 +175,5 @@
         </div>
       </section>
     </main>
-
-    <footer class="footer">
-      <div class="container grid grid--footer">
-        <div class="logo-col">
-          <a href="#" class="footer-logo">
-            <h2 class="logo-text">Link Downloader</h2>
-          </a>
-
-          <p class="copyright">
-            Copyright &copy; <span class="year">2025</span> by Link Downloader.
-            All rights reserved.
-          </p>
-        </div>
-
-        <nav class="nav-col">
-          <p class="footer-heading">About</p>
-          <ul class="footer-nav">
-            <li><a class="footer-link" href="#">How it works</a></li>
-            <li><a class="footer-link" href="#">Supported platforms</a></li>
-            <li><a class="footer-link" href="#">Privacy & terms</a></li>
-          </ul>
-        </nav>
-      </div>
-    </footer>
   </body>
 </html>

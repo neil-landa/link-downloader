@@ -8,21 +8,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-
-# Import DynamoDB tracker (optional - fails gracefully if not configured)
-try:
-    from dynamodb_tracker import (
-        create_visit_record,
-        save_visit_to_dynamodb,
-        DYNAMODB_AVAILABLE
-    )
-except ImportError:
-    # DynamoDB tracking not available
-    DYNAMODB_AVAILABLE = False
-    def create_visit_record(*args, **kwargs):
-        return None
-    def save_visit_to_dynamodb(*args, **kwargs):
-        return False
+import json
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 
@@ -57,6 +43,14 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 # Export cookies from your browser and save to this location
 COOKIES_FILE = os.path.join(os.path.dirname(__file__), 'cookies.txt')
 
+# Download limits to protect disk space (20GB VM)
+# Max video duration in seconds (2 hours = 7200 seconds)
+MAX_VIDEO_DURATION = 7200  # 2 hours
+# Max file size per individual file in bytes (75MB = 500 * 1024 * 1024)
+MAX_FILE_SIZE = 75 * 1024 * 1024  # 75MB
+# Max total size per download session in bytes (2GB = 2 * 1024 * 1024 * 1024)
+MAX_SESSION_SIZE = 1 * 1024 * 1024 * 1024  # 1GB
+
 
 def clean_youtube_url(url):
     """Clean YouTube URLs by removing query parameters after the video ID"""
@@ -85,6 +79,76 @@ def clean_youtube_url(url):
 
     # Return original URL if not YouTube or doesn't match patterns
     return url
+
+
+def get_video_info(url, yt_dlp_path, use_cookies=False):
+    """Get video metadata (duration, estimated size) without downloading"""
+    try:
+        cmd = [yt_dlp_path, '--dump-json', '--no-warnings', url]
+
+        if use_cookies and os.path.exists(COOKIES_FILE):
+            cmd = [yt_dlp_path, '--cookies', COOKIES_FILE,
+                   '--dump-json', '--no-warnings', url]
+
+        # Try different YouTube clients if it's a YouTube URL
+        is_youtube = 'youtube' in url.lower()
+        if is_youtube:
+            # Try Android client first (most reliable without Node.js)
+            cmd = [yt_dlp_path, '--extractor-args', 'youtube:player_client=android',
+                   '--dump-json', '--no-warnings', url]
+            if use_cookies and os.path.exists(COOKIES_FILE):
+                cmd = [yt_dlp_path, '--cookies', COOKIES_FILE, '--extractor-args',
+                       'youtube:player_client=android', '--dump-json', '--no-warnings', url]
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30  # Quick timeout for metadata fetch
+        )
+
+        if result.returncode == 0:
+            try:
+                info = json.loads(result.stdout)
+                duration = info.get('duration', 0)  # Duration in seconds
+                filesize = info.get('filesize') or info.get(
+                    'filesize_approx', 0)  # Size in bytes
+                title = info.get('title', 'Unknown')
+                return {'duration': duration, 'filesize': filesize, 'title': title, 'success': True}
+            except json.JSONDecodeError:
+                return {'success': False, 'error': 'Failed to parse video info'}
+        else:
+            # If Android client fails, try default client
+            if is_youtube:
+                cmd = [yt_dlp_path, '--extractor-args', 'youtube:player_client=default',
+                       '--dump-json', '--no-warnings', url]
+                if use_cookies and os.path.exists(COOKIES_FILE):
+                    cmd = [yt_dlp_path, '--cookies', COOKIES_FILE, '--extractor-args',
+                           'youtube:player_client=default', '--dump-json', '--no-warnings', url]
+
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+
+                if result.returncode == 0:
+                    try:
+                        info = json.loads(result.stdout)
+                        duration = info.get('duration', 0)
+                        filesize = info.get('filesize') or info.get(
+                            'filesize_approx', 0)
+                        title = info.get('title', 'Unknown')
+                        return {'duration': duration, 'filesize': filesize, 'title': title, 'success': True}
+                    except json.JSONDecodeError:
+                        return {'success': False, 'error': 'Failed to parse video info'}
+
+            return {'success': False, 'error': result.stderr[:200] if result.stderr else 'Unknown error'}
+    except subprocess.TimeoutExpired:
+        return {'success': False, 'error': 'Timeout fetching video info'}
+    except Exception as e:
+        return {'success': False, 'error': str(e)[:200]}
 
 
 def download_audio(url, output_dir):
@@ -279,6 +343,25 @@ def download_audio(url, output_dir):
             )
 
         if result.returncode == 0:
+            # Check file size after download
+            # Find the downloaded file(s) in the output directory
+            downloaded_files = [f for f in os.listdir(output_dir)
+                                if os.path.isfile(os.path.join(output_dir, f)) and f != '.download_in_progress']
+
+            for filename in downloaded_files:
+                file_path = os.path.join(output_dir, filename)
+                file_size = os.path.getsize(file_path)
+
+                if file_size > MAX_FILE_SIZE:
+                    # Remove the oversized file
+                    try:
+                        os.remove(file_path)
+                    except Exception:
+                        pass
+                    size_mb = file_size / (1024 * 1024)
+                    max_mb = MAX_FILE_SIZE / (1024 * 1024)
+                    return False, f"File too large ({size_mb:.1f}MB). Maximum allowed: {max_mb}MB per file."
+
             return True, None
         else:
             error_msg = result.stderr
@@ -346,6 +429,30 @@ def status():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/download_file/<session_id>')
+def download_file(session_id):
+    """Download the zip file for a completed session"""
+    try:
+        # Security: prevent directory traversal
+        if '..' in session_id or '/' in session_id:
+            return jsonify({'error': 'Invalid session ID'}), 400
+
+        session_dir = os.path.join(DOWNLOAD_DIR, session_id)
+        zip_path = os.path.join(session_dir, 'downloads.zip')
+
+        if not os.path.exists(zip_path):
+            return jsonify({'error': 'File not found or expired'}), 404
+
+        return send_file(
+            zip_path,
+            as_attachment=True,
+            download_name='link-downloader-files.zip',
+            mimetype='application/zip'
+        )
+    except Exception as e:
+        return jsonify({'error': str(e)[:200]}), 500
+
+
 @app.route('/<path:path>')
 def serve_static(path):
     """Serve static files (CSS, JS, images)"""
@@ -357,6 +464,107 @@ def serve_static(path):
     if os.path.exists(file_path) and os.path.isfile(file_path):
         return send_file(file_path)
     return "Not found", 404
+
+
+@app.route('/validate', methods=['POST'])
+def validate():
+    """Validate links before downloading - returns which are valid/invalid"""
+    try:
+        # Get all links from the form
+        links = []
+        for i in range(1, 11):
+            link_key = f'link-{i}'
+            if link_key in request.form:
+                url = request.form[link_key].strip()
+                if url:
+                    url = clean_youtube_url(url)
+                    links.append(url)
+
+        if not links:
+            return jsonify({'valid': [], 'invalid': []}), 200
+
+        # Find yt-dlp
+        yt_dlp_path = shutil.which('yt-dlp')
+        if not yt_dlp_path:
+            for path in ['/home/ubuntu/.local/bin/yt-dlp', '/home/ec2-user/.local/bin/yt-dlp',
+                         '/usr/local/bin/yt-dlp', '/usr/bin/yt-dlp', 'yt-dlp']:
+                if os.path.exists(path) or path == 'yt-dlp':
+                    yt_dlp_path = path
+                    break
+
+        use_cookies = os.path.exists(
+            COOKIES_FILE) and os.path.getsize(COOKIES_FILE) > 0
+
+        valid_links = []
+        invalid_links = []
+        total_estimated_size = 0
+
+        for url in links:
+            video_info = get_video_info(url, yt_dlp_path, use_cookies)
+
+            if not video_info.get('success'):
+                # If we can't get info, mark as invalid
+                invalid_links.append({
+                    'url': url,
+                    'title': url,
+                    'reason': video_info.get('error', 'Could not fetch video information')
+                })
+                continue
+
+            duration = video_info.get('duration', 0)
+            estimated_size = video_info.get('filesize', 0) or 0
+            title = video_info.get('title', url)
+
+            # Check duration limit
+            if duration > MAX_VIDEO_DURATION:
+                hours = duration / 3600
+                max_hours = MAX_VIDEO_DURATION / 3600
+                invalid_links.append({
+                    'url': url,
+                    'title': title,
+                    'reason': f'Video too long ({hours:.1f}h). Maximum: {max_hours}h'
+                })
+                continue
+
+            # Check estimated file size (if available)
+            if estimated_size > 0:
+                if estimated_size > MAX_FILE_SIZE:
+                    size_mb = estimated_size / (1024 * 1024)
+                    max_mb = MAX_FILE_SIZE / (1024 * 1024)
+                    invalid_links.append({
+                        'url': url,
+                        'title': title,
+                        'reason': f'File too large ({size_mb:.1f}MB). Maximum: {max_mb}MB'
+                    })
+                    continue
+
+                # Check if adding this file would exceed session limit
+                if total_estimated_size + estimated_size > MAX_SESSION_SIZE:
+                    total_gb = (total_estimated_size +
+                                estimated_size) / (1024 * 1024 * 1024)
+                    max_gb = MAX_SESSION_SIZE / (1024 * 1024 * 1024)
+                    invalid_links.append({
+                        'url': url,
+                        'title': title,
+                        'reason': f'Total session size would exceed limit ({total_gb:.2f}GB). Maximum: {max_gb}GB'
+                    })
+                    continue
+
+                total_estimated_size += estimated_size
+
+            # If we get here, the link is valid
+            valid_links.append({
+                'url': url,
+                'title': title
+            })
+
+        return jsonify({
+            'valid': valid_links,
+            'invalid': invalid_links
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)[:200]}), 500
 
 
 @app.route('/download', methods=['POST'])
@@ -380,6 +588,96 @@ def download():
 
         if not links:
             return jsonify({'error': 'No links provided'}), 400
+
+        # Pre-check: Validate video duration and estimated sizes before downloading
+        yt_dlp_path = shutil.which('yt-dlp')
+        if not yt_dlp_path:
+            for path in ['/home/ubuntu/.local/bin/yt-dlp', '/home/ec2-user/.local/bin/yt-dlp',
+                         '/usr/local/bin/yt-dlp', '/usr/bin/yt-dlp', 'yt-dlp']:
+                if os.path.exists(path) or path == 'yt-dlp':
+                    yt_dlp_path = path
+                    break
+
+        use_cookies = os.path.exists(
+            COOKIES_FILE) and os.path.getsize(COOKIES_FILE) > 0
+
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Pre-checking {len(links)} links for duration and size limits...")
+        rejected_links_info = []  # Store rejected links with title and reason
+        valid_links_info = []  # Store valid links with title
+        url_to_title = {}  # Map URL to title for tracking
+        total_estimated_size = 0
+
+        for url in links:
+            video_info = get_video_info(url, yt_dlp_path, use_cookies)
+
+            if not video_info.get('success'):
+                # If we can't get info, we'll allow it but check after download
+                print(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] Warning: Could not get info for {url}: {video_info.get('error', 'Unknown')}")
+                # Allow it through, will check after download
+                valid_links_info.append({'url': url, 'title': url})
+                url_to_title[url] = url
+                continue
+
+            duration = video_info.get('duration', 0)
+            estimated_size = video_info.get('filesize', 0) or 0
+            title = video_info.get('title', url)
+            url_to_title[url] = title
+
+            # Check duration limit
+            if duration > MAX_VIDEO_DURATION:
+                hours = duration / 3600
+                max_hours = MAX_VIDEO_DURATION / 3600
+                rejected_links_info.append({
+                    'url': url,
+                    'title': title,
+                    'reason': f'Video too long ({hours:.1f}h). Maximum: {max_hours}h'
+                })
+                print(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] Rejected {url}: Duration {duration}s exceeds limit {MAX_VIDEO_DURATION}s")
+                continue
+
+            # Check estimated file size (if available)
+            if estimated_size > 0:
+                if estimated_size > MAX_FILE_SIZE:
+                    size_mb = estimated_size / (1024 * 1024)
+                    max_mb = MAX_FILE_SIZE / (1024 * 1024)
+                    rejected_links_info.append({
+                        'url': url,
+                        'title': title,
+                        'reason': f'File too large ({size_mb:.1f}MB). Maximum: {max_mb}MB'
+                    })
+                    print(
+                        f"[{datetime.now().strftime('%H:%M:%S')}] Rejected {url}: Estimated size {estimated_size} bytes exceeds limit {MAX_FILE_SIZE} bytes")
+                    continue
+
+                # Check if adding this file would exceed session limit
+                if total_estimated_size + estimated_size > MAX_SESSION_SIZE:
+                    total_gb = (total_estimated_size +
+                                estimated_size) / (1024 * 1024 * 1024)
+                    max_gb = MAX_SESSION_SIZE / (1024 * 1024 * 1024)
+                    rejected_links_info.append({
+                        'url': url,
+                        'title': title,
+                        'reason': f'Total session size would exceed limit ({total_gb:.2f}GB). Maximum: {max_gb}GB'
+                    })
+                    print(
+                        f"[{datetime.now().strftime('%H:%M:%S')}] Rejected {url}: Total session size would exceed limit")
+                    continue
+
+                total_estimated_size += estimated_size
+
+            # If we get here, the link is valid
+            valid_links_info.append({'url': url, 'title': title})
+
+        if not valid_links_info:
+            return jsonify({'error': 'All links were rejected due to size or duration limits'}), 400
+
+        # Use only valid links for download
+        valid_urls = [item['url'] for item in valid_links_info]
+        links = valid_urls
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] Proceeding with {len(links)} valid links (rejected {len(rejected_links_info)} links)")
 
         # Create a temporary directory for this download session
         session_dir = tempfile.mkdtemp(dir=DOWNLOAD_DIR)
@@ -408,7 +706,8 @@ def download():
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Starting parallel downloads: {len(links)} links, {MAX_PARALLEL_DOWNLOADS} at a time")
 
         def download_with_error_handling(url):
-            """Download a single URL and return (url, success, error)"""
+            """Download a single URL and return (url, success, error, title)"""
+            title = url_to_title.get(url, url)
             try:
                 print(
                     f"[{datetime.now().strftime('%H:%M:%S')}] [PARALLEL] Downloading: {url}")
@@ -419,17 +718,17 @@ def download():
                     # Truncate long error messages for user display
                     error_msg = str(error)[:200] if len(
                         str(error)) > 200 else str(error)
-                    return (url, False, error_msg)
+                    return (url, False, error_msg, title)
                 else:
                     print(
                         f"[{datetime.now().strftime('%H:%M:%S')}] [PARALLEL] Successfully downloaded: {url}")
-                    return (url, True, None)
+                    return (url, True, None, title)
             except Exception as e:
                 # Catch individual download errors so one doesn't stop the others
                 error_msg = f"Unexpected error: {str(e)[:200]}"
                 print(
                     f"[{datetime.now().strftime('%H:%M:%S')}] [PARALLEL] Exception downloading {url}: {error_msg}")
-                return (url, False, error_msg)
+                return (url, False, error_msg, title)
 
         # Execute downloads in parallel
         start_time = time.time()
@@ -440,11 +739,17 @@ def download():
 
             # Collect results as they complete
             completed_count = 0
+            successful_downloads = []  # Track successful downloads with titles
+            failed_downloads = []  # Track failed downloads with titles
             for future in as_completed(future_to_url):
-                url, success, error = future.result()
+                url, success, error, title = future.result()
                 completed_count += 1
                 if not success:
                     errors.append(f"{url}: {error}")
+                    failed_downloads.append(
+                        {'url': url, 'title': title, 'reason': error})
+                else:
+                    successful_downloads.append({'url': url, 'title': title})
                 print(
                     f"[{datetime.now().strftime('%H:%M:%S')}] Progress: {completed_count}/{len(links)} downloads completed")
 
@@ -460,6 +765,39 @@ def download():
         all_files = [os.path.join(session_dir, f) for f in new_files if os.path.isfile(
             os.path.join(session_dir, f))]
 
+        # Final check: Verify total session size and individual file sizes
+        total_size = 0
+        oversized_files = []
+
+        for file_path in all_files:
+            if os.path.exists(file_path):
+                file_size = os.path.getsize(file_path)
+                total_size += file_size
+
+                if file_size > MAX_FILE_SIZE:
+                    oversized_files.append(os.path.basename(file_path))
+
+        if oversized_files:
+            # Remove oversized files
+            for file_path in all_files:
+                if os.path.basename(file_path) in oversized_files:
+                    try:
+                        os.remove(file_path)
+                        all_files.remove(file_path)
+                    except Exception:
+                        pass
+
+            error_msg = f"Some files exceeded size limit and were removed: {', '.join(oversized_files[:3])}"
+            if len(oversized_files) > 3:
+                error_msg += f" (and {len(oversized_files) - 3} more)"
+            # Continue with remaining files, but log the error
+
+        if total_size > MAX_SESSION_SIZE:
+            # This shouldn't happen if pre-check worked, but handle it anyway
+            size_gb = total_size / (1024 * 1024 * 1024)
+            max_gb = MAX_SESSION_SIZE / (1024 * 1024 * 1024)
+            return jsonify({'error': f"Total download size ({size_gb:.2f}GB) exceeds limit ({max_gb}GB). Please reduce the number of links."}), 400
+
         if not all_files:
             error_msg = 'No files were downloaded.'
             if errors:
@@ -470,31 +808,6 @@ def download():
                     error_msg += f' (and {len(errors) - 5} more errors)'
             return jsonify({'error': error_msg}), 500
 
-        # Extract filenames (just basenames, not full paths) for tracking
-        downloaded_filenames = [os.path.basename(f) for f in all_files]
-        
-        # Track visit/download in DynamoDB (non-blocking, errors won't break download)
-        if DYNAMODB_AVAILABLE:
-            try:
-                visit_record = create_visit_record(
-                    request=request,
-                    links=links,
-                    downloaded_files=downloaded_filenames,
-                    errors=errors if errors else None
-                )
-                if visit_record:
-                    # Save asynchronously to avoid blocking the response
-                    def save_tracking():
-                        try:
-                            save_visit_to_dynamodb(visit_record)
-                        except Exception as e:
-                            print(f"Error saving tracking data (non-critical): {e}")
-                    
-                    threading.Thread(target=save_tracking, daemon=True).start()
-            except Exception as e:
-                # Tracking errors should never break downloads
-                print(f"Error creating visit record (non-critical): {e}")
-
         # Create a zip file
         zip_path = os.path.join(session_dir, 'downloads.zip')
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
@@ -502,7 +815,27 @@ def download():
                 if os.path.exists(file_path) and file_path != zip_path:
                     zipf.write(file_path, os.path.basename(file_path))
 
-        # Send the zip file
+        # Prepare response with download results
+        # Combine pre-rejected links with download failures
+        all_rejected = rejected_links_info + failed_downloads
+
+        # Store session info for file download (we'll use session_dir name as identifier)
+        session_id = os.path.basename(session_dir)
+
+        # If there are any rejected links, return JSON with results and download info
+        # Otherwise, send the file directly
+        if all_rejected:
+            # Return JSON with download results
+            return jsonify({
+                'success': True,
+                'has_file': True,
+                'session_id': session_id,
+                'successful': successful_downloads,
+                'rejected': all_rejected,
+                'message': f'Downloaded {len(successful_downloads)} file(s), rejected {len(all_rejected)} link(s)'
+            }), 200
+
+        # Send the zip file directly if no rejections
         return send_file(
             zip_path,
             as_attachment=True,
