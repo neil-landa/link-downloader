@@ -109,87 +109,13 @@ if (downloadForm) {
   function markInvalidLinks(invalidLinks) {
     resetLinkStyles();
     const allInputs = downloadForm.querySelectorAll('input[type="url"]');
-    
+
     invalidLinks.forEach((invalidLink) => {
       allInputs.forEach((input) => {
         if (input.value.trim() === invalidLink.url) {
           input.classList.add("invalid-link");
         }
       });
-    });
-  }
-
-  // Function to show results modal
-  function showResultsModal(data) {
-    const modal = document.getElementById("resultsModal");
-    const successfulDiv = document.getElementById("successfulDownloads");
-    const rejectedDiv = document.getElementById("rejectedDownloads");
-
-    // Clear previous content
-    successfulDiv.innerHTML = "";
-    rejectedDiv.innerHTML = "";
-
-    // Show successful downloads
-    if (data.successful && data.successful.length > 0) {
-      successfulDiv.innerHTML = `
-        <div class="results-title success-title">
-          <span class="results-icon">✓</span>
-          <strong>Successfully downloaded (${data.successful.length}):</strong>
-        </div>
-        <ul class="results-list success-list">
-          ${data.successful.map(item => `<li>${item.title}</li>`).join('')}
-        </ul>
-      `;
-    }
-
-    // Show rejected downloads
-    if (data.rejected && data.rejected.length > 0) {
-      rejectedDiv.innerHTML = `
-        <div class="results-title error-title">
-          <span class="results-icon">✗</span>
-          <strong>Could not download (${data.rejected.length}):</strong>
-        </div>
-        <ul class="results-list error-list">
-          ${data.rejected.map(item => `<li><strong>${item.title}</strong><br><span class="reason-text">${item.reason}</span></li>`).join('')}
-        </ul>
-      `;
-    }
-
-    // Show modal
-    modal.style.display = "flex";
-  }
-
-  // Function to close modal and reset form
-  function closeModalAndReset() {
-    const modal = document.getElementById("resultsModal");
-    modal.style.display = "none";
-
-    // Clear all form inputs
-    const allInputs = downloadForm.querySelectorAll('input[type="url"]');
-    allInputs.forEach((input) => {
-      input.value = "";
-      input.classList.remove("invalid-link");
-    });
-
-    // Reset button
-    const submitBtn = downloadForm.querySelector('button[type="submit"]');
-    submitBtn.disabled = false;
-    submitBtn.textContent = "Download All";
-  }
-
-  // Handle Try Again button
-  const tryAgainBtn = document.getElementById("tryAgainBtn");
-  if (tryAgainBtn) {
-    tryAgainBtn.addEventListener("click", closeModalAndReset);
-  }
-
-  // Close modal when clicking outside of it
-  const modal = document.getElementById("resultsModal");
-  if (modal) {
-    modal.addEventListener("click", function(e) {
-      if (e.target === modal) {
-        closeModalAndReset();
-      }
     });
   }
 
@@ -210,7 +136,7 @@ if (downloadForm) {
     // Create message containers if they don't exist
     let errorDiv = document.querySelector(".error-message");
     let resultsDiv = document.querySelector(".results-message");
-    
+
     if (!errorDiv) {
       errorDiv = document.createElement("div");
       errorDiv.className = "error-message";
@@ -218,7 +144,7 @@ if (downloadForm) {
         "margin-top: 2rem; padding: 1.6rem; background-color: #fee; border: 2px solid #fcc; border-radius: 9px; color: #c33; display: none;";
       downloadForm.appendChild(errorDiv);
     }
-    
+
     if (!resultsDiv) {
       resultsDiv = document.createElement("div");
       resultsDiv.className = "results-message";
@@ -226,7 +152,7 @@ if (downloadForm) {
         "margin-top: 2rem; padding: 1.6rem; background-color: #e8f5e9; border: 2px solid #4caf50; border-radius: 9px; color: #2e7d32; display: none;";
       downloadForm.appendChild(resultsDiv);
     }
-    
+
     errorDiv.style.display = "none";
     resultsDiv.style.display = "none";
 
@@ -243,7 +169,7 @@ if (downloadForm) {
 
       if (validateResponse.ok) {
         const validationData = await validateResponse.json();
-        
+
         // Mark invalid links
         if (validationData.invalid && validationData.invalid.length > 0) {
           markInvalidLinks(validationData.invalid);
@@ -254,7 +180,9 @@ if (downloadForm) {
           const invalidMessages = validationData.invalid.map(
             (item) => `${item.title}: ${item.reason}`
           );
-          errorDiv.innerHTML = `<strong>All links were rejected:</strong><br>${invalidMessages.join("<br>")}`;
+          errorDiv.innerHTML = `<strong>All links were rejected:</strong><br>${invalidMessages.join(
+            "<br>"
+          )}`;
           errorDiv.style.display = "block";
           submitBtn.textContent = originalText;
           submitBtn.disabled = false;
@@ -270,15 +198,17 @@ if (downloadForm) {
       });
 
       const contentType = response.headers.get("content-type") || "";
-      
+
       if (response.ok) {
         if (contentType.includes("application/json")) {
           // Handle JSON response with results
           const data = await response.json();
-          
+
           if (data.has_file && data.session_id) {
             // Download the file
-            const fileResponse = await fetch(`/download_file/${data.session_id}`);
+            const fileResponse = await fetch(
+              `/download_file/${data.session_id}`
+            );
             if (fileResponse.ok) {
               const blob = await fileResponse.blob();
               const url = window.URL.createObjectURL(blob);
@@ -292,12 +222,41 @@ if (downloadForm) {
             }
           }
 
-          // Show modal with results
-          showResultsModal(data);
+          // Show results message
+          let resultsHTML = "";
 
-          // Reset button
-          submitBtn.textContent = originalText;
-          submitBtn.disabled = false;
+          if (data.successful && data.successful.length > 0) {
+            const successfulTitles = data.successful.map((item) => item.title);
+            resultsHTML += `<strong>Successfully downloaded:</strong><br>${successfulTitles.join(
+              "<br>"
+            )}`;
+          }
+
+          if (data.rejected && data.rejected.length > 0) {
+            const rejectedTitles = data.rejected.map((item) => item.title);
+            resultsHTML += `<br><br><strong>Could not download:</strong><br>${rejectedTitles.join(
+              "<br>"
+            )}`;
+          }
+
+          if (resultsHTML) {
+            resultsDiv.innerHTML = resultsHTML;
+            resultsDiv.style.display = "block";
+          }
+
+          // Clear form inputs after successful download
+          const allInputs = downloadForm.querySelectorAll('input[type="url"]');
+          allInputs.forEach((input) => {
+            input.value = "";
+            input.classList.remove("invalid-link");
+          });
+
+          submitBtn.textContent = "Download Complete!";
+          setTimeout(() => {
+            submitBtn.textContent = originalText;
+            submitBtn.disabled = false;
+            resultsDiv.style.display = "none";
+          }, 5000);
         } else {
           // Handle direct file download (no rejections)
           const blob = await response.blob();
